@@ -1,133 +1,438 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import random
 
-# -------------------------
-# 페이지 설정
-# -------------------------
 st.set_page_config(
-    page_title="연애상담 챗봇",
-    page_icon="💖",
+    page_title="로그라이크 턴제 RPG",
+    page_icon="⚔️",
+    layout="centered"
 )
 
-st.title("💖 AI 연애상담 챗봇")
-st.caption("Gemini 2.5 Flash Lite 기반")
+# -------------------
+# 초기화
+# -------------------
 
-# -------------------------
-# API KEY 불러오기
-# -------------------------
-try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-except Exception:
-    st.error("❌ Streamlit Secrets에 GEMINI_API_KEY를 설정해주세요.")
-    st.stop()
+def init_game():
 
-# -------------------------
-# Gemini Client 생성
-# -------------------------
-try:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-except Exception as e:
-    st.error(f"❌ Gemini 클라이언트 생성 실패: {e}")
-    st.stop()
+    best_round = st.session_state.get("best_round", 1)
 
-# -------------------------
-# 시스템 프롬프트
-# -------------------------
-SYSTEM_PROMPT = """
-너는 따뜻하고 공감 능력이 뛰어난 연애상담 AI야.
+    st.session_state.player_hp = 100
+    st.session_state.max_hp = 100
 
-규칙:
-- 사용자의 감정을 먼저 공감할 것
-- 상대방을 함부로 비난하지 말 것
-- 현실적인 조언 제공
-- 부드럽고 자연스럽게 대화할 것
-- 너무 단정짓지 말 것
-- 답변은 한국어로 작성
-"""
+    st.session_state.level = 1
+    st.session_state.exp = 0
+    st.session_state.exp_needed = 100
 
-# -------------------------
-# 채팅 기록 초기화
-# -------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.attack_bonus = 0
 
-# -------------------------
-# 이전 채팅 출력
-# -------------------------
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    st.session_state.heal_count = 3
+    st.session_state.power_attack_count = 2
 
-# -------------------------
-# 사용자 입력
-# -------------------------
-user_input = st.chat_input("연애 고민을 입력해보세요...")
+    st.session_state.round = 1
 
-if user_input:
+    st.session_state.logs = []
+    st.session_state.game_over = False
 
-    # 사용자 메시지 저장
-    st.session_state.messages.append({
-        "role": "user",
-        "content": user_input
-    })
+    st.session_state.reward_pending = False
 
-    # 사용자 메시지 표시
-    with st.chat_message("user"):
-        st.markdown(user_input)
+    st.session_state.best_round = best_round
 
-    # AI 응답 생성
-    with st.chat_message("assistant"):
+    create_monster()
 
-        with st.spinner("답변 생성 중..."):
+    add_log("🎮 게임 시작")
 
-            try:
-                # 이전 대화 기록 문자열 만들기
-                conversation = ""
 
-                for msg in st.session_state.messages:
-                    role = "사용자" if msg["role"] == "user" else "AI"
-                    conversation += f"{role}: {msg['content']}\n"
+def add_log(text):
+    st.session_state.logs.append(text)
 
-                full_prompt = f"""
-{SYSTEM_PROMPT}
 
-아래는 지금까지의 대화 내용이야.
+def is_boss():
+    return st.session_state.round % 5 == 0
 
-{conversation}
 
-위 대화를 참고해서 자연스럽게 이어서 답변해줘.
-"""
+# -------------------
+# 몬스터 생성
+# -------------------
 
-                # Gemini 호출
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash-lite",
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.8,
-                        max_output_tokens=700,
-                    )
-                )
+def create_monster():
 
-                ai_response = response.text
+    round_num = st.session_state.round
 
-                # 응답 출력
-                st.markdown(ai_response)
+    if is_boss():
 
-                # 응답 저장
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": ai_response
-                })
+        st.session_state.monster_name = "👹 보스"
 
-            except Exception as e:
-                error_message = f"""
-⚠️ 오류가 발생했습니다.
+        hp = 180 + round_num * 20
 
-오류 내용:
-{str(e)}
+        attack = 18 + round_num
 
-잠시 후 다시 시도해주세요.
-"""
+    else:
 
-                st.error(error_message)
+        st.session_state.monster_name = "👾 몬스터"
+
+        hp = 80 + round_num * 15
+
+        attack = 10 + round_num // 2
+
+    st.session_state.monster_hp = hp
+    st.session_state.monster_max_hp = hp
+    st.session_state.monster_attack = attack
+
+
+# -------------------
+# 레벨업
+# -------------------
+
+def gain_exp(amount):
+
+    st.session_state.exp += amount
+
+    while st.session_state.exp >= st.session_state.exp_needed:
+
+        st.session_state.exp -= st.session_state.exp_needed
+
+        st.session_state.level += 1
+
+        st.session_state.max_hp += 20
+
+        st.session_state.player_hp = st.session_state.max_hp
+
+        st.session_state.attack_bonus += 2
+
+        st.session_state.exp_needed = int(
+            st.session_state.exp_needed * 1.3
+        )
+
+        add_log(
+            f"⭐ 레벨업! Lv.{st.session_state.level}"
+        )
+
+
+# -------------------
+# 게임 종료
+# -------------------
+
+def game_over():
+
+    st.session_state.game_over = True
+
+    if st.session_state.round > st.session_state.best_round:
+        st.session_state.best_round = st.session_state.round
+
+    add_log("💀 게임 오버")
+
+
+# -------------------
+# 몬스터 턴
+# -------------------
+
+def monster_turn():
+
+    if st.session_state.game_over:
+        return
+
+    if random.random() < 0.05:
+        add_log("💨 회피 성공!")
+        return
+
+    damage = random.randint(
+        st.session_state.monster_attack - 4,
+        st.session_state.monster_attack + 4
+    )
+
+    st.session_state.player_hp -= damage
+
+    add_log(
+        f"{st.session_state.monster_name} 공격! {damage} 피해"
+    )
+
+    if st.session_state.player_hp <= 0:
+        st.session_state.player_hp = 0
+        game_over()
+
+
+# -------------------
+# 몬스터 처치
+# -------------------
+
+def monster_defeated():
+
+    round_num = st.session_state.round
+
+    if is_boss():
+
+        gain_exp(150)
+
+        add_log("🏆 보스 처치!")
+
+        st.session_state.reward_pending = True
+
+    else:
+
+        gain_exp(50)
+
+        heal = 15
+
+        st.session_state.player_hp = min(
+            st.session_state.max_hp,
+            st.session_state.player_hp + heal
+        )
+
+        add_log(f"💚 전투 후 회복 +{heal}")
+
+        st.session_state.round += 1
+
+        create_monster()
+
+
+# -------------------
+# 플레이어 공격
+# -------------------
+
+def attack():
+
+    if st.session_state.game_over:
+        return
+
+    if st.session_state.reward_pending:
+        return
+
+    damage = random.randint(
+        10,
+        20
+    ) + st.session_state.attack_bonus
+
+    if random.random() < 0.10:
+        damage *= 2
+        add_log("💥 치명타!")
+
+    st.session_state.monster_hp -= damage
+
+    add_log(f"⚔️ 공격! {damage} 피해")
+
+    if st.session_state.monster_hp <= 0:
+
+        st.session_state.monster_hp = 0
+
+        monster_defeated()
+
+        return
+
+    monster_turn()
+
+
+# -------------------
+# 강공격
+# -------------------
+
+def power_attack():
+
+    if st.session_state.game_over:
+        return
+
+    if st.session_state.reward_pending:
+        return
+
+    if st.session_state.power_attack_count <= 0:
+        add_log("❌ 강공격 없음")
+        return
+
+    st.session_state.power_attack_count -= 1
+
+    damage = random.randint(
+        25,
+        45
+    ) + st.session_state.attack_bonus
+
+    st.session_state.monster_hp -= damage
+
+    add_log(f"🔥 강공격! {damage} 피해")
+
+    if st.session_state.monster_hp <= 0:
+
+        st.session_state.monster_hp = 0
+
+        monster_defeated()
+
+        return
+
+    monster_turn()
+
+
+# -------------------
+# 회복
+# -------------------
+
+def heal():
+
+    if st.session_state.game_over:
+        return
+
+    if st.session_state.reward_pending:
+        return
+
+    if st.session_state.heal_count <= 0:
+        add_log("❌ 회복약 없음")
+        return
+
+    st.session_state.heal_count -= 1
+
+    amount = random.randint(20, 35)
+
+    st.session_state.player_hp = min(
+        st.session_state.max_hp,
+        st.session_state.player_hp + amount
+    )
+
+    add_log(f"💚 회복 +{amount}")
+
+    monster_turn()
+
+
+# -------------------
+# 시작
+# -------------------
+
+if "player_hp" not in st.session_state:
+    init_game()
+
+# -------------------
+# UI
+# -------------------
+
+st.title("⚔️ 로그라이크 턴제 RPG")
+
+st.write(
+    f"🏆 최고 기록: Round {st.session_state.best_round}"
+)
+
+st.header(f"Round {st.session_state.round}")
+
+col1, col2 = st.columns(2)
+
+with col1:
+
+    st.subheader("🧙 플레이어")
+
+    st.progress(
+        st.session_state.player_hp /
+        st.session_state.max_hp
+    )
+
+    st.write(
+        f"HP {st.session_state.player_hp}/"
+        f"{st.session_state.max_hp}"
+    )
+
+    st.write(
+        f"Lv.{st.session_state.level}"
+    )
+
+    st.write(
+        f"EXP {st.session_state.exp}/"
+        f"{st.session_state.exp_needed}"
+    )
+
+    st.write(
+        f"공격력 보너스 +{st.session_state.attack_bonus}"
+    )
+
+with col2:
+
+    st.subheader(
+        st.session_state.monster_name
+    )
+
+    st.progress(
+        max(st.session_state.monster_hp, 0)
+        /
+        st.session_state.monster_max_hp
+    )
+
+    st.write(
+        f"HP {max(st.session_state.monster_hp,0)}/"
+        f"{st.session_state.monster_max_hp}"
+    )
+
+st.divider()
+
+# -------------------
+# 보상 선택
+# -------------------
+
+if st.session_state.reward_pending:
+
+    st.success("🎁 보스 보상 선택")
+
+    reward = st.radio(
+        "보상",
+        [
+            "공격력 +5",
+            "최대체력 +30",
+            "회복약 +2",
+            "강공격 +2"
+        ]
+    )
+
+    if st.button("보상 획득"):
+
+        if reward == "공격력 +5":
+            st.session_state.attack_bonus += 5
+
+        elif reward == "최대체력 +30":
+            st.session_state.max_hp += 30
+            st.session_state.player_hp += 30
+
+        elif reward == "회복약 +2":
+            st.session_state.heal_count += 2
+
+        elif reward == "강공격 +2":
+            st.session_state.power_attack_count += 2
+
+        add_log(f"🎁 획득: {reward}")
+
+        st.session_state.reward_pending = False
+
+        st.session_state.round += 1
+
+        create_monster()
+
+        st.rerun()
+
+else:
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.button(
+            "⚔️ 공격",
+            use_container_width=True,
+            on_click=attack
+        )
+
+    with c2:
+        st.button(
+            f"🔥 강공격 ({st.session_state.power_attack_count})",
+            use_container_width=True,
+            on_click=power_attack
+        )
+
+    with c3:
+        st.button(
+            f"💚 회복 ({st.session_state.heal_count})",
+            use_container_width=True,
+            on_click=heal
+        )
+
+st.divider()
+
+if st.session_state.game_over:
+    st.error("게임 오버")
+
+if st.button("🔄 새 게임"):
+    init_game()
+    st.rerun()
+
+st.subheader("📜 전투 로그")
+
+for log in reversed(st.session_state.logs[-20:]):
+    st.write(log)
